@@ -1,0 +1,4 @@
+*.pyc
+uploads.db
+uploads/*
+tracker-env
