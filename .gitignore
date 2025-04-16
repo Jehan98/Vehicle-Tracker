@@ -1,4 +1,7 @@
 *.pyc
 uploads.db
-uploads/*
+track_records.db
+*/uploads/*
 tracker-env
+*/outs/*
+*/configs/*

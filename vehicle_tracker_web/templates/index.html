@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Search Jobs & Vehicle Records</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      background: url("{{ url_for('static', filename='traffic.jpg') }}") no-repeat center center fixed;
+      background-size: cover;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      position: relative;
+    }
+    
+    body::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background-color: rgba(255, 255, 255, 0.7); /* white overlay for readability */
+      z-index: 0;
+    }
+    
+    h1, .tab-buttons, .tab-content {
+      position: relative;
+      z-index: 1;
+    }
+
+    h1 {
+      color: #202124;
+      margin: 30px 0 10px;
+      text-align: center;
+    }
+
+    .tab-buttons {
+      display: flex;
+      gap: 10px;
+      margin: 20px 0;
+    }
+
+    .tab-buttons button {
+      padding: 10px 20px;
+      background-color: #1a73e8;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+
+    .tab-buttons button.active {
+      background-color: #1558b0;
+    }
+
+    .tab-content {
+      display: none;
+      width: 100%;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    form.styled-form {
+      background-color: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      max-width: 600px;
+      width: 90%;
+      margin-bottom: 30px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    form label {
+      display: block;
+      margin-top: 15px;
+      font-weight: bold;
+      color: #202124;
+    }
+
+    form input[type="text"],
+    form input[type="number"],
+    form textarea {
+      width: 100%;
+      padding: 10px;
+      margin-top: 5px;
+      border: 1px solid #dadce0;
+      border-radius: 4px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+
+    form textarea {
+      resize: vertical;
+    }
+
+    .save-btn {
+      margin-top: 20px;
+      padding: 12px 20px;
+      background-color: #1a73e8;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+
+    .save-btn:hover {
+      background-color: #1558b0;
+    }
+
+    .delete-button {
+      margin: 20px auto;
+      display: block;
+      padding: 12px 20px;
+      background-color: #d93025;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+
+    .delete-button:hover {
+      background-color: #b1271b;
+    }
+
+    table {
+      width: 90%;
+      max-width: 1000px;
+      border-collapse: collapse;
+      margin: 30px auto;
+      background-color: white;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      border-radius: 8px;
+      overflow: hidden;
+      font-size: 0.95em;
+    }
+
+    th, td {
+      border: 1px solid #ddd;
+      padding: 12px;
+      text-align: left;
+    }
+
+    th {
+      background-color: #f8f9fa;
+      color: #202124;
+    }
+
+    .vehicle-records {
+      margin-top: 10px;
+    }
+
+    .vehicle-records img {
+      width: 200px;
+      height: auto;
+      margin-top: 10px;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Highway Patrol: Vehicle Tracker</h1>
+
+  <!-- Tabs -->
+  <div class="tab-buttons">
+    <button class="tab-btn active" onclick="showTab('submit-job')">Submit Search Job</button>
+    <button class="tab-btn" onclick="showTab('tracking-vehicles')">Current Tracking Vehicles</button>
+  </div>
+
+  <!-- Submit Job Form -->
+  <div id="submit-job" class="tab-content active">
+    <form class="styled-form" method="post" enctype="multipart/form-data" action="{{ url_for('app_routes.submit_search_job') }}">
+      <label for="vehicle_plate">Vehicle Plate:</label>
+      <input type="text" name="vehicle_plate" required>
+
+      <label for="vehicle_color">Vehicle Color:</label>
+      <input type="text" name="vehicle_color" required>
+
+      <label for="vehicle_type">Vehicle Type:</label>
+      <input type="text" name="vehicle_type" required>
+
+      <label for="description">Description:</label>
+      <textarea name="description" rows="4" required></textarea>
+
+      <label for="search_duration">Search Duration (minutes):</label>
+      <input type="number" name="search_duration" required>
+
+      <button type="submit" class="save-btn">Submit Search Job</button>
+    </form>
+  </div>
+
+  <!-- Tracking Vehicles Table -->
+  <div id="tracking-vehicles" class="tab-content">
+    <table>
+      <thead>
+        <tr>
+          <th>Vehicle Plate</th>
+          <th>Vehicle Type</th>
+          <th>Vehicle Color</th>
+          <th>Search Duration (minutes)</th>
+          <th>Description</th>
+          <th>Found Vehicles</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for job_data in data %}
+        <tr>
+          <td>{{ job_data.vehicle_plate }}</td>
+          <td>{{ job_data.vehicle_type }}</td>
+          <td>{{ job_data.vehicle_color }}</td>
+          <td>{{ job_data.search_duration }}</td>
+          <td>{{ job_data.description }}</td>
+          <td>
+            <div class="vehicle-records">
+              {% if job_data.vehicle_records %}
+                <ul>
+                  {% for record in job_data.vehicle_records %}
+                    <li>
+                      <p><strong>Found Vehicle Type:</strong> {{ record.found_vehicle_type }}</p>
+                      <p><strong>Found Vehicle Speed:</strong> {{ record.found_vehicle_speed }}</p>
+                      <p><strong>Description:</strong> {{ record.description }}</p>
+                      <p><strong>Found Time:</strong> {{ record.found_time }}</p>
+                      <img src="{{ url_for('uploaded_file', filename=record.found_vehicle_image_path.split('/')[-1]) }}" alt="Found Vehicle Image">
+                    </li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <p>No vehicle records found for this search job.</p>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <form method="post" action="{{ url_for('app_routes.clear_all') }}">
+      <button type="submit" class="delete-button">Clear All Jobs</button>
+    </form>
+  </div>
+
+  <script>
+    function showTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(tab => {
+        tab.classList.remove('active');
+      });
+
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+      });
+
+      document.getElementById(tabId).classList.add('active');
+
+      event.target.classList.add('active');
+    }
+  </script>
+</body>
+</html>
