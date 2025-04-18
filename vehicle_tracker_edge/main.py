@@ -1,22 +1,24 @@
-import cv2
-import time
-import threading
-from ultralytics import YOLO
-from utills.deep_sort import DeepSort
-import torch
+import io
 import os
-import yaml
-import easyocr
-import requests
+import json
+import time
 from datetime import datetime
+import threading
+import yaml
+import requests
+from rapidfuzz import fuzz
+import cv2
+import easyocr
+from ultralytics import YOLO
+import torch
 
-from db_module.models import SearchJob, VehicleRecord
+from utills.deep_sort import DeepSort
 from db_module.deps import SessionLocal
-from args import JOB_SUMBIT_ENDPOINT
+from args import JOB_SUMBIT_ENDPOINT, JOBS_ENDPOINT
 
 os.makedirs("/home/jehan/Downloads/vehical_tracker/outs", exist_ok=True)
 
-with open('configs/config.yaml', 'r') as file:
+with open('configs/config.yaml', 'r', encoding="utf-8") as file:
     config = yaml.safe_load(file)
 
 reader = easyocr.Reader(['en'])  # OCR reader for license plates
@@ -57,10 +59,8 @@ deepsort = DeepSort(
     use_cuda=use_cuda_for_deepsort
 )
 
-# Set output path
-out_video_path = "configs/output.mp4"
+VIDEO_OUT = "configs/output.mp4"
 
-# Load video
 if ".mp4" in input_video_file_name or ".avi" in input_video_file_name:
     cap = cv2.VideoCapture(input_video_file_name)
 else:
@@ -68,56 +68,70 @@ else:
 
 if not cap.isOpened():
     raise RuntimeError(f"Failed to open video: {input_video_file_name}")
-else:
-    print("ok")
-# Define video writer
+
 if save_output:
     frame_width = int(cap.get(3))
     frame_height = int(cap.get(4))
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(out_video_path, fourcc, fps, (frame_width, frame_height))
+    out = cv2.VideoWriter(VIDEO_OUT, fourcc, fps, (frame_width, frame_height))
 
 lock = threading.Lock()
 
 def is_center_inside_rectangle(point, rectangle):
+    " Check whether a point is inside a rectangle "
     px, py = point
     x1, y1, x2, y2 = rectangle
     return x1 <= px <= x2 and y1 <= py <= y2
 
 system_start_time = time.time()
-frame_count = 0
+FRAME_COUNT = 0
 try:
+    db = SessionLocal()
+    response = requests.get(JOBS_ENDPOINT, timeout=10)
+    pending_search_jobs = json.loads(response.content)
+    # for search_job in pending_search_jobs:
+    #     job = SearchJob(
+    #             id=search_job["id"],
+    #             vehicle_plate=search_job["vehicle_plate"],
+    #             vehicle_color=search_job["vehicle_color"],
+    #             vehicle_type=search_job["vehicle_type"],
+    #             search_duration=search_job["search_duration"],
+    #             description=search_job["description"]
+    #         )
+    # db.add(job)
+    # db.commit()
     while time.time() - system_start_time < 100:
-        db = SessionLocal()
-        records = db.query(SearchJob).all()
-        print('records', records)
+        # db = SessionLocal()
+        # records = db.query(SearchJob).all()
+        # print('records', records)
         start_time = time.time()
         ret, frame = cap.read()
-        frame_count += 1 
-        print(f'Processing frame: {frame_count}')
+        FRAME_COUNT += 1
+        print(f'Processing frame: {FRAME_COUNT}')
         if not ret:
             print("Video ended or no frame.")
             break
 
-        results = model.predict(source=frame, conf=yolo_confidence_score, classes=yolo_required_class_ids, save=False, verbose=False, imgsz=yolo_input_img_size)
-        
+        results = model.predict(source=frame, conf=yolo_confidence_score,
+                                classes=yolo_required_class_ids, save=False,
+                                verbose=False, imgsz=yolo_input_img_size)
+
         if results[0].boxes is None:
             continue
-        
+
         xywhs = results[0].boxes.xywh.cpu().numpy()
         class_ids = results[0].boxes.cls.cpu().numpy()
         scores = results[0].boxes.conf.cpu().numpy()
 
-        # Filter detections inside rectangle
         filtered_xywhs = []
         filtered_scores = []
         filtered_class_ids = []
 
-        for i in range(len(xywhs)):
-            x, y, w, h = xywhs[i]
+        for i, xywh in enumerate(xywhs):
+            x, y, w, h = xywh
             if is_center_inside_rectangle((x, y), right_side_rect_coodinates):
-                filtered_xywhs.append(xywhs[i])
+                filtered_xywhs.append(xywh)
                 filtered_scores.append(scores[i])
                 filtered_class_ids.append(class_ids[i])
 
@@ -125,8 +139,9 @@ try:
             continue
 
         # Run DeepSORT only on filtered detections
-        tracks = deepsort.update(torch.Tensor(filtered_xywhs), filtered_scores, filtered_class_ids, frame)
-        
+        tracks = deepsort.update(torch.Tensor(filtered_xywhs), filtered_scores,
+                                 filtered_class_ids, frame)
+
         if tracks is None or len(tracks) == 0:
             continue
 
@@ -142,40 +157,43 @@ try:
                 cy = (y1 + y2) // 2
                 if is_center_inside_rectangle((cx, cy), right_side_rect_coodinates):
                     roi = frame_copy[y1:y2, x1:x2]
-                    # Perform OCR on the ROI
                     ocr_results = reader.readtext(roi, detail=0)
                     print('ocr_results', ocr_results)
-                    img_path = f"outs/Pframe_{frame_count}_{ocr_results}-{time.time()}.jpg"
-                    cv2.imwrite(img_path, roi)
-                    
-                    for plate in ocr_results:
-                        cleaned_plate = plate.replace(" ", "").upper()
-                        if target_plate in cleaned_plate:
-                            print(f"Match found: {cleaned_plate} (ID: {int(identities[i])})")
-                            files = {
-                                "image": open(img_path, "rb")
-                            }
 
-                            data = {
-                                "search_job_id": 1,
-                                "found_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                "found_vehicle_type": "Car",
-                                "found_vehicle_speed": 45.0,
-                                "description": "Spotted at checkpoint"
-                            }
-                            response = requests.post(JOB_SUMBIT_ENDPOINT, files=files, data=data)
-                            print("Status:", response.status_code)
-                            print("Response:", response.text)
-                            if draw:
-                                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
-                                cv2.putText(frame, f'MATCH: {cleaned_plate}', (x1, y1 - 10),
-                                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                    for search_job in pending_search_jobs:
+                        target_plate = search_job["vehicle_plate"].replace(" ", "").upper()
+                        for plate in ocr_results:
+                            cleaned_plate = plate.replace(" ", "").upper()
+                            score = fuzz.partial_ratio(cleaned_plate, target_plate)
+                            if score > 80:
+                                success, encoded_image = cv2.imencode(".jpg", roi)
+                                image_bytes = io.BytesIO(encoded_image.tobytes())
+                                print(f"Match found: {cleaned_plate} (ID: \
+                                      {int(identities[i])})")
+
+                                files = {
+                                    "image": ("frame.jpg", image_bytes, "image/jpeg")
+                                }
+
+                                data = {
+                                    "search_job_id": search_job["id"],
+                                    "found_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    "found_vehicle_type": "Car",
+                                    "found_vehicle_speed": 45.0,
+                                    "description": "Spotted at checkpoint"
+                                }
+                                response = requests.post(JOB_SUMBIT_ENDPOINT, files=files,
+                                                         data=data, timeout=10)
+                                print("Status:", response.status_code)
+                                print("Response:", response.text)
+                                if draw:
+                                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
+                                    cv2.putText(frame, f'MATCH: {cleaned_plate}', (x1, y1 - 10),
+                                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
                     if draw:
                         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                         cv2.putText(frame, f'ID: {int(identities[i])}', (x1, y1 - 10),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-
-        
             for i, box in enumerate(bboxes):
                 x1, y1, x2, y2 = [int(coord) for coord in box]
 

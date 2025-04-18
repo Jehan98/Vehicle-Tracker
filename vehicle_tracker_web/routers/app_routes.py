@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 from flask import Blueprint, render_template, request, redirect, url_for, jsonify
 
@@ -85,5 +85,36 @@ def clear_all():
     """ Clear all records """
     db = SessionLocal()
     db.query(SearchJob).delete()
+    db.query(VehicleRecord).delete()
     db.commit()
     return redirect(url_for('app_routes.index'))
+
+@router.route("/pending-search-jobs", methods=["GET"])
+def pending_search_jobs():
+    """ Get pending search jobs """
+    db = SessionLocal()
+    try:
+        search_jobs = db.query(SearchJob).all()
+        data = []
+        for job in search_jobs:
+            if job.created_at is None:
+                continue
+
+            expire_time = job.created_at + timedelta(minutes=job.search_duration)
+            print('expire_time', expire_time, datetime.utcnow())
+            if expire_time < datetime.utcnow():
+                continue
+
+            job_data = {
+                "id": job.id,
+                "vehicle_plate": job.vehicle_plate,
+                "vehicle_color": job.vehicle_color,
+                "vehicle_type": job.vehicle_type,
+                "search_duration": job.search_duration,
+                "description": job.description,
+                "created_at": job.created_at.isoformat(),
+            }
+            data.append(job_data)
+        return jsonify(data)
+    finally:
+        db.close()
