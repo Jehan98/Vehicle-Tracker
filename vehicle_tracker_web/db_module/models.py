@@ -1,10 +1,11 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Numeric
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime
 from sqlalchemy.orm import relationship
 from .db import db
 
 
 class SearchJob(db):
+    " Search Job "
     __tablename__ = 'search_jobs'
 
     id = Column(Integer, primary_key=True)
@@ -19,12 +20,11 @@ class SearchJob(db):
 
 
 class VehicleRecord(db):
+    " Vehicle record found "
     __tablename__ = 'vehicle_records'
 
     id = Column(Integer, primary_key=True)
     search_job_id = Column(Integer, ForeignKey('search_jobs.id'), nullable=False)
     found_vehicle_image_path = Column(String(120), nullable=False)
     found_time = Column(DateTime, nullable=False)
-    found_vehicle_type = Column(String(20), nullable=False)
-    found_vehicle_speed = Column(Numeric(20, 2), nullable=False)
     description = Column(Text, nullable=False)

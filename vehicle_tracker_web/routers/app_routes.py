@@ -70,8 +70,6 @@ def submit_vehicle_record():
             search_job_id=int(request.form["search_job_id"]),
             found_vehicle_image_path=image_path,
             found_time=datetime.strptime(request.form["found_time"], "%Y-%m-%d %H:%M:%S"),
-            found_vehicle_type=request.form["found_vehicle_type"],
-            found_vehicle_speed=float(request.form["found_vehicle_speed"]),
             description=request.form["description"]
         )
         db.add(record)

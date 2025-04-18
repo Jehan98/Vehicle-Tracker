@@ -224,8 +224,6 @@
                 <ul>
                   {% for record in job_data.vehicle_records %}
                     <li>
-                      <p><strong>Found Vehicle Type:</strong> {{ record.found_vehicle_type }}</p>
-                      <p><strong>Found Vehicle Speed:</strong> {{ record.found_vehicle_speed }}</p>
                       <p><strong>Description:</strong> {{ record.description }}</p>
                       <p><strong>Found Time:</strong> {{ record.found_time }}</p>
                       <img src="{{ url_for('uploaded_file', filename=record.found_vehicle_image_path.split('/')[-1]) }}" alt="Found Vehicle Image">
