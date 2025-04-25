@@ -205,7 +205,8 @@
           <th>Vehicle Plate</th>
           <th>Vehicle Type</th>
           <th>Vehicle Color</th>
-          <th>Search Duration (minutes)</th>
+          <th>Search Start Time</th>
+          <th>Search Duration</th>
           <th>Description</th>
           <th>Found Vehicles</th>
         </tr>
@@ -216,7 +217,8 @@
           <td>{{ job_data.vehicle_plate }}</td>
           <td>{{ job_data.vehicle_type }}</td>
           <td>{{ job_data.vehicle_color }}</td>
-          <td>{{ job_data.search_duration }}</td>
+          <td>{{ job_data.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+          <td>{{ job_data.search_duration }} minutes</td>
           <td>{{ job_data.description }}</td>
           <td>
             <div class="vehicle-records">

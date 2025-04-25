@@ -2,8 +2,9 @@ import io
 import os
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 import threading
+import pytz
 import yaml
 import requests
 from rapidfuzz import fuzz
@@ -183,9 +184,12 @@ try:
                                         }
 
                                         # Prepare data for the POST request
+                                        utc_time = datetime.now(timezone.utc)
+                                        kolkata_zone = pytz.timezone('Asia/Kolkata')
+                                        kolkata_time = utc_time.astimezone(kolkata_zone)
                                         data = {
                                             "search_job_id": search_job["id"],
-                                            "found_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                            "found_time": kolkata_time.strftime("%Y-%m-%d %H:%M:%S"),
                                             "description": f"Spotted at checkpoint with plate {cleaned_plate}"
                                         }
 
@@ -196,12 +200,6 @@ try:
                                         print("Job Submission Response:", response.text)
                                     except Exception as e:
                                         print(f"Error submitting job for Track ID {track_id}: {e}")
-
-
-                                    # Optionally break here if you only need to match a track ID once
-                                    # against any of the pending jobs.
-                                    # break
-
                     if draw:
                          # Draw box with track ID for all tracked vehicles in the region
                         color = (0, 255, 0) # Green for tracked
