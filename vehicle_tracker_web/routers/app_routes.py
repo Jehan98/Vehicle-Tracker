@@ -1,5 +1,7 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os
+
+import pytz
 from flask import Blueprint, render_template, request, redirect, url_for, jsonify
 
 from db_module.models import SearchJob, VehicleRecord
@@ -98,9 +100,14 @@ def pending_search_jobs():
             if job.created_at is None:
                 continue
 
-            expire_time = job.created_at + timedelta(minutes=job.search_duration)
-            print('expire_time', expire_time, datetime.utcnow())
-            if expire_time < datetime.utcnow():
+            utc_time = datetime.now(timezone.utc)
+            kolkata_zone = pytz.timezone('Asia/Kolkata')
+            kolkata_time_now = utc_time.astimezone(kolkata_zone)
+            created_at = kolkata_zone.localize(job.created_at)
+            expire_time = created_at + timedelta(minutes=job.search_duration)
+
+            print('expire_time', expire_time, kolkata_time_now)
+            if expire_time < kolkata_time_now:
                 continue
 
             job_data = {

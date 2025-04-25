@@ -1,9 +1,11 @@
 import io
 import os
 import json
+import socket
 import time
 from datetime import datetime, timezone
 import threading
+import traceback
 import pytz
 import yaml
 import requests
@@ -14,8 +16,10 @@ from ultralytics import YOLO
 import torch
 
 from utills.deep_sort import DeepSort
-from db_module.deps import SessionLocal
+from db_module_edge.deps import SessionLocal
 from args import JOB_SUMBIT_ENDPOINT, JOBS_ENDPOINT
+from db_module_edge.models import VehicleRecord
+from utils import is_center_inside_rectangle, is_internet_available
 
 os.makedirs("/home/jehan/Downloads/vehical_tracker/outs", exist_ok=True)
 
@@ -78,28 +82,64 @@ if save_output:
 
 lock = threading.Lock()
 
-def is_center_inside_rectangle(point, rectangle):
-    " Check whether a point is inside a rectangle "
-    px, py = point
-    x1, y1, x2, y2 = rectangle
-    return x1 <= px <= x2 and y1 <= py <= y2
-
-# Set to store track IDs of vehicles that have already been successfully OCR'd and matched
 processed_vehicle_ids = set()
-
 system_start_time = time.time()
 FRAME_COUNT = 0
 try:
     db = SessionLocal()
-    # It's better to fetch pending search jobs less frequently or handle updates
-    # potentially via a separate thread or message queue depending on application
-    # requirements. For this example, we fetch once at the start.
     response = requests.get(JOBS_ENDPOINT, timeout=10)
-    pending_search_jobs = json.loads(response.content)
-    # You might want to validate or process pending_search_jobs structure here
+    print('response.content ', response.content )
+    pending_search_jobs = json.loads(response.content) if response.content else []
+    last_job_fetch_time = time.time()
 
-    while time.time() - system_start_time < 100: # Run for a limited time
+    while time.time() - system_start_time < 100:
         start_time = time.time()
+        found_vehicle_records = db.query(VehicleRecord).all()
+        if is_internet_available() and found_vehicle_records:
+            for found_vehicle_record in found_vehicle_records:
+                search_job_id = found_vehicle_record["search_job_id"]
+                record_id = found_vehicle_record["id"]
+                vehicle_desc = found_vehicle_record["description"]
+                vehicle_plate = found_vehicle_record["vehicle_plate"]
+                found_vehicle_image_path = found_vehicle_record["image_path"]
+                found_time = found_vehicle_record["found_time"].strftime("%Y-%m-%d %H:%M:%S")
+
+                data = {
+                    "search_job_id": search_job_id,
+                    "found_time": found_time,
+                    "description": vehicle_desc
+                }
+
+                success, encoded_image_from_file = cv2.imencode(".jpg", found_vehicle_image_path)
+                if not success:
+                    continue
+                image_bytes_from_file = io.BytesIO(encoded_image_from_file.tobytes())
+                files = {
+                    "image": (f"{search_job_id}_{vehicle_plate}.jpg", image_bytes_from_file, "image/jpeg")
+                }
+
+                response = requests.post(JOB_SUMBIT_ENDPOINT, files=files,
+                                            data=data, timeout=10)
+                if response.status_code == 200:
+                    deleted_count = db.query(VehicleRecord).filter(
+                        VehicleRecord.id == record_id).delete()
+                    db.commit()
+        if start_time - last_job_fetch_time >= 30:
+            print("Fetching pending search jobs...")
+            try:
+                response = requests.get(JOBS_ENDPOINT, timeout=10)
+                response.raise_for_status()
+                pending_search_jobs = json.loads(response.content) if response.content else []
+                last_job_fetch_time = start_time
+                print(f"Fetched {len(pending_search_jobs)} pending search jobs.")
+            except requests.exceptions.RequestException as e:
+                print(f"Error fetching pending search jobs: {e}")
+
+        if not pending_search_jobs:
+            print("No pending search jobs")
+            time.sleep(1)
+            continue
+
         ret, frame = cap.read()
         FRAME_COUNT += 1
         print(f'Processing frame: {FRAME_COUNT}')
@@ -183,19 +223,38 @@ try:
                                             "image": ("frame.jpg", image_bytes, "image/jpeg")
                                         }
 
-                                        # Prepare data for the POST request
+                                        vehicle_desc = f"Spotted at checkpoint with plate {cleaned_plate}"
+
                                         utc_time = datetime.now(timezone.utc)
                                         kolkata_zone = pytz.timezone('Asia/Kolkata')
                                         kolkata_time = utc_time.astimezone(kolkata_zone)
+                                        found_time = kolkata_time.strftime("%Y-%m-%d %H:%M:%S")
                                         data = {
                                             "search_job_id": search_job["id"],
-                                            "found_time": kolkata_time.strftime("%Y-%m-%d %H:%M:%S"),
-                                            "description": f"Spotted at checkpoint with plate {cleaned_plate}"
+                                            "found_time": found_time,
+                                            "description": vehicle_desc
                                         }
 
-                                        # Send the job submission request
                                         response = requests.post(JOB_SUMBIT_ENDPOINT, files=files,
                                                                  data=data, timeout=10)
+                                        if response.status_code != 200:
+                                            save_directory = "./outs"
+                                            image_filename = f"{search_job_id}_{cleaned_plate}.jpg"
+                                            local_image_path = os.path.join(save_directory, image_filename)
+
+                                            os.makedirs(save_directory, exist_ok=True)
+
+                                            cv2.imwrite(local_image_path, roi)
+                                            print(f"Image saved to: {local_image_path}")
+                                            job = VehicleRecord(
+                                                vehicle_plate=cleaned_plate,
+                                                search_job_id=search_job["id"],
+                                                found_vehicle_image_path=local_image_path,
+                                                description=vehicle_desc,
+                                                found_time=kolkata_time
+                                            )
+                                            db.add(job)
+                                            db.commit()
                                         print("Job Submission Status:", response.status_code)
                                         print("Job Submission Response:", response.text)
                                     except Exception as e:
@@ -239,12 +298,8 @@ try:
             cv2.imshow('Object Tracking', frame)
             if cv2.waitKey(1) & 0xFF == ord('q'): # Press 'q' to exit
                  break
-
-except KeyboardInterrupt:
-    print("Keyboard interrupt. Stopping...")
 except Exception as e:
-    print(f"An error occurred: {e}")
-
+    traceback.print_exc()
 finally:
     cap.release()
     if save_output:
@@ -252,7 +307,6 @@ finally:
         print("Video saved successfully.")
     if show_output:
         cv2.destroyAllWindows()
-    # Close the database session
     if 'db' in locals() and db:
         db.close()
     print("Resources released successfully.")
