@@ -48,6 +48,7 @@ max_age = config.get("max_age", 70)
 n_init = config.get("n_init", 3)
 nn_budget = config.get("nn_budget", 100)
 use_cuda_for_deepsort = config.get("use_cuda_for_deepsort", False)
+frames_to_read = config.get("frames_to_read", 30)
 
 # Initialize YOLO and DeepSORT
 model = YOLO('models/yolov8n.onnx')
@@ -63,7 +64,7 @@ deepsort = DeepSort(
     use_cuda=use_cuda_for_deepsort
 )
 
-VIDEO_OUT = "configs/output.mp4"
+VIDEO_OUT = "configs/output_low_fps.mp4"
 
 if ".mp4" in input_video_file_name or ".avi" in input_video_file_name:
     cap = cv2.VideoCapture(input_video_file_name)
@@ -73,15 +74,16 @@ else:
 if not cap.isOpened():
     raise RuntimeError(f"Failed to open video: {input_video_file_name}")
 
+fps_video = int(cap.get(cv2.CAP_PROP_FPS))
+skip_frames = int(fps_video / frames_to_read)
+
 if save_output:
     frame_width = int(cap.get(3))
     frame_height = int(cap.get(4))
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(VIDEO_OUT, fourcc, fps, (frame_width, frame_height))
+    out = cv2.VideoWriter(VIDEO_OUT, fourcc, frames_to_read, (frame_width, frame_height))
 
 lock = threading.Lock()
-
 processed_vehicle_ids = set()
 system_start_time = time.time()
 FRAME_COUNT = 0
@@ -93,11 +95,27 @@ try:
     print('pending_search_jobs ', pending_search_jobs)
     last_job_fetch_time = time.time()
 
-    while time.time() - system_start_time < 100:
+    while cap.isOpened():
         start_time = time.time()
+
+        if start_time - system_start_time > 100:
+            break
+
+        ret, frame = cap.read()
+        FRAME_COUNT += 1
+
+        if FRAME_COUNT % skip_frames != 0:
+            print(f'Skipping frame: {FRAME_COUNT}')
+            continue
+        print(f'Processing frame: {FRAME_COUNT}')
+        if not ret:
+            print("Video ended or no frame.")
+            break
+
         found_vehicle_records = db.query(VehicleRecord).all()
-        print('found_vehicle_records', found_vehicle_records)
+
         if is_internet_available() and found_vehicle_records:
+            print('found_vehicle_records', found_vehicle_records)
             for found_vehicle_record in found_vehicle_records:
                 search_job_id = found_vehicle_record.search_job_id
                 record_id = found_vehicle_record.id
@@ -134,7 +152,7 @@ try:
                 response.raise_for_status()
                 pending_search_jobs = json.loads(response.content) if response.content else []
                 last_job_fetch_time = start_time
-                print(f"Fetched {len(pending_search_jobs)} pending search jobs.")
+                print('pending_search_jobs ', pending_search_jobs)
             except requests.exceptions.RequestException as e:
                 print(f"Error fetching pending search jobs: {e}")
 
@@ -142,13 +160,6 @@ try:
             print("No pending search jobs")
             time.sleep(1)
             continue
-
-        ret, frame = cap.read()
-        FRAME_COUNT += 1
-        print(f'Processing frame: {FRAME_COUNT}')
-        if not ret:
-            print("Video ended or no frame.")
-            break
 
         results = model.predict(source=frame, conf=yolo_confidence_score,
                                 classes=yolo_required_class_ids, save=False,
@@ -208,15 +219,20 @@ try:
                     roi = frame_copy[y1:y2, x1:x2]
                     if roi.shape[0] > 0 and roi.shape[1] > 0: # Ensure ROI is valid
                         ocr_results = reader.readtext(roi, detail=0)
+                        if not ocr_results:
+                            continue
                         print(f'Track ID: {track_id}, OCR Results: {ocr_results}')
 
                         # Check against pending search jobs
                         for search_job in pending_search_jobs:
                             target_plate = search_job["vehicle_plate"].replace(" ", "").upper()
                             for plate in ocr_results:
+                                if len(plate) < 4:
+                                    print(f"detected plate is too short: {plate}")
+                                    continue
                                 cleaned_plate = plate.replace(" ", "").upper()
                                 score = fuzz.partial_ratio(cleaned_plate, target_plate)
-
+                                print(f"Plate match score: {plate}")
                                 if score > 80:
                                     processed_vehicle_ids.add(track_id)
 
@@ -266,7 +282,7 @@ try:
                                             )
                                             db.add(job)
                                             db.commit()
-                                            print("Job Submission Status:", response.status_code)
+                                            print("Job Store Status:", response.status_code)
                                     except Exception as e:
                                         print(f"Error submitting job for Track ID {track_id}: {e}")
                     if draw:
@@ -293,7 +309,7 @@ try:
                           (255, 0, 0), 2) # Blue rectangle
 
         # Calculate and display FPS
-        fps = 1 / (time.time() - start_time)
+        fps = (1 + skip_frames) / (time.time() - start_time)
         print('fps: ', fps)
         fps_list.append(fps)
         if draw:
