@@ -3,6 +3,7 @@ import os
 
 import pytz
 from flask import Blueprint, render_template, request, redirect, url_for, jsonify
+from sqlalchemy import desc
 
 from db_module.models import SearchJob, VehicleRecord
 from db_module.deps import SessionLocal
@@ -13,22 +14,40 @@ UPLOAD_FOLDER = "uploads"
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
-@router.route("/", methods=["GET"])
+@router.route("/")
 def index():
     """ Landing page """
     db = SessionLocal()
-    records = db.query(SearchJob).all()
-    return render_template("index.html", data=records)
+    try:
+        search_jobs = db.query(SearchJob).order_by(desc(SearchJob.created_at)).all()
+
+        data = []
+        for job in search_jobs:
+            vehicle_records = db.query(VehicleRecord).filter(
+                VehicleRecord.search_job_id == job.id
+            ).order_by(desc(VehicleRecord.found_time)).all()
+
+            data.append({
+                "search_job": job,
+                "vehicle_records": vehicle_records
+            })
+        return render_template("index.html", data=data)
+    finally:
+        db.close()
 
 @router.route("/submit-search-job", methods=["POST"])
 def submit_search_job():
     """ Submit search job """
     db = SessionLocal()
     try:
+        utc_time = datetime.now(timezone.utc)
+        kolkata_zone = pytz.timezone('Asia/Kolkata')
+        kolkata_time = utc_time.astimezone(kolkata_zone)
         job = SearchJob(
             vehicle_plate=request.form["vehicle_plate"],
             vehicle_color=request.form["vehicle_color"],
             vehicle_type=request.form["vehicle_type"],
+            created_at=kolkata_time,
             search_duration=int(request.form["search_duration"]),
             description=request.form["description"]
         )
@@ -43,13 +62,13 @@ def show_search_jobs():
     """ Show search jobs """
     db = SessionLocal()
     try:
-        search_jobs = db.query(SearchJob).all()
+        search_jobs = db.query(SearchJob).order_by(desc(SearchJob.created_at)).all()
         print(search_jobs)
         data = []
         for job in search_jobs:
             vehicle_records = db.query(VehicleRecord).filter(
                 VehicleRecord.search_job_id == job.id
-            ).all()
+            ).order_by(desc(VehicleRecord.found_time)).all()
             data.append({
                 "search_job": job,
                 "vehicle_records": vehicle_records
@@ -77,7 +96,20 @@ def submit_vehicle_record():
         )
         db.add(record)
         db.commit()
-        return jsonify({"status": "Vehicle record stored"})
+
+        search_jobs = db.query(SearchJob).order_by(desc(SearchJob.created_at)).all()
+
+        data = []
+        for job in search_jobs:
+            vehicle_records = db.query(VehicleRecord).filter(
+                VehicleRecord.search_job_id == job.id
+            ).order_by(desc(VehicleRecord.found_time)).all()
+
+            data.append({
+                "search_job": job,
+                "vehicle_records": vehicle_records
+            })
+        return redirect(url_for('app_routes.show_search_jobs', tab='tracking-vehicles'))
     finally:
         db.close()
 
