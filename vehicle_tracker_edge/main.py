@@ -1,7 +1,6 @@
 import io
 import os
 import json
-import socket
 import time
 from datetime import datetime, timezone
 import threading
@@ -14,6 +13,7 @@ import cv2
 import easyocr
 from ultralytics import YOLO
 import torch
+import numpy as np
 
 from utills.deep_sort import DeepSort
 from db_module_edge.deps import SessionLocal
@@ -50,7 +50,7 @@ nn_budget = config.get("nn_budget", 100)
 use_cuda_for_deepsort = config.get("use_cuda_for_deepsort", False)
 
 # Initialize YOLO and DeepSORT
-model = YOLO('models/yolov8n.pt')
+model = YOLO('models/yolov8n.onnx')
 deepsort = DeepSort(
     model_path="utills/deep_sort/deep/checkpoint/ckpt.t7",
     max_dist=max_dist,
@@ -85,32 +85,35 @@ lock = threading.Lock()
 processed_vehicle_ids = set()
 system_start_time = time.time()
 FRAME_COUNT = 0
+fps_list = []
 try:
     db = SessionLocal()
     response = requests.get(JOBS_ENDPOINT, timeout=10)
-    print('response.content ', response.content )
     pending_search_jobs = json.loads(response.content) if response.content else []
+    print('pending_search_jobs ', pending_search_jobs)
     last_job_fetch_time = time.time()
 
     while time.time() - system_start_time < 100:
         start_time = time.time()
         found_vehicle_records = db.query(VehicleRecord).all()
+        print('found_vehicle_records', found_vehicle_records)
         if is_internet_available() and found_vehicle_records:
             for found_vehicle_record in found_vehicle_records:
-                search_job_id = found_vehicle_record["search_job_id"]
-                record_id = found_vehicle_record["id"]
-                vehicle_desc = found_vehicle_record["description"]
-                vehicle_plate = found_vehicle_record["vehicle_plate"]
-                found_vehicle_image_path = found_vehicle_record["image_path"]
-                found_time = found_vehicle_record["found_time"].strftime("%Y-%m-%d %H:%M:%S")
+                search_job_id = found_vehicle_record.search_job_id
+                record_id = found_vehicle_record.id
+                vehicle_desc = found_vehicle_record.description
+                vehicle_plate = found_vehicle_record.vehicle_plate
+                found_vehicle_image_path = found_vehicle_record.found_vehicle_image_path
+                found_time = found_vehicle_record.found_time.strftime("%Y-%m-%d %H:%M:%S")
 
                 data = {
                     "search_job_id": search_job_id,
                     "found_time": found_time,
-                    "description": vehicle_desc
+                    "description": vehicle_desc,
+                    "vehicle_plate": vehicle_plate
                 }
-
-                success, encoded_image_from_file = cv2.imencode(".jpg", found_vehicle_image_path)
+                image = cv2.imread(found_vehicle_image_path)
+                success, encoded_image_from_file = cv2.imencode(".jpg", image)
                 if not success:
                     continue
                 image_bytes_from_file = io.BytesIO(encoded_image_from_file.tobytes())
@@ -175,9 +178,12 @@ try:
             continue
 
         # Run DeepSORT only on filtered detections within the region
-        tracks = deepsort.update(torch.Tensor(filtered_xywhs), filtered_scores,
-                                 filtered_class_ids, frame)
-
+        s_t = time.time()
+        filtered_xywhs_array = np.array(filtered_xywhs)
+        filtered_xywhs_tensor = torch.from_numpy(filtered_xywhs_array)
+        tracks = deepsort.update(filtered_xywhs_tensor, filtered_scores, filtered_class_ids,
+                                 frame)
+        print('time for tracks: ', time.time()-s_t)
         if tracks is None or len(tracks) == 0:
             # If no tracks are updated/confirmed in the region, continue
             continue
@@ -229,15 +235,20 @@ try:
                                         kolkata_zone = pytz.timezone('Asia/Kolkata')
                                         kolkata_time = utc_time.astimezone(kolkata_zone)
                                         found_time = kolkata_time.strftime("%Y-%m-%d %H:%M:%S")
+                                        search_job_id = search_job["id"]
                                         data = {
-                                            "search_job_id": search_job["id"],
+                                            "search_job_id": search_job_id,
                                             "found_time": found_time,
-                                            "description": vehicle_desc
+                                            "description": vehicle_desc,
+                                            "vehicle_plate": cleaned_plate
                                         }
-
-                                        response = requests.post(JOB_SUMBIT_ENDPOINT, files=files,
+                                        try:
+                                            response = requests.post(JOB_SUMBIT_ENDPOINT, files=files,
                                                                  data=data, timeout=10)
-                                        if response.status_code != 200:
+                                            if response.status_code != 200:
+                                                raise Exception("Error in submitting found vehicle. Storing locally...")
+                                        except Exception as e:
+                                            print(f"Error submitting job for Track ID {track_id}: {e}")
                                             save_directory = "./outs"
                                             image_filename = f"{search_job_id}_{cleaned_plate}.jpg"
                                             local_image_path = os.path.join(save_directory, image_filename)
@@ -248,15 +259,14 @@ try:
                                             print(f"Image saved to: {local_image_path}")
                                             job = VehicleRecord(
                                                 vehicle_plate=cleaned_plate,
-                                                search_job_id=search_job["id"],
+                                                search_job_id=search_job_id,
                                                 found_vehicle_image_path=local_image_path,
                                                 description=vehicle_desc,
                                                 found_time=kolkata_time
                                             )
                                             db.add(job)
                                             db.commit()
-                                        print("Job Submission Status:", response.status_code)
-                                        print("Job Submission Response:", response.text)
+                                            print("Job Submission Status:", response.status_code)
                                     except Exception as e:
                                         print(f"Error submitting job for Track ID {track_id}: {e}")
                     if draw:
@@ -283,21 +293,17 @@ try:
                           (255, 0, 0), 2) # Blue rectangle
 
         # Calculate and display FPS
+        fps = 1 / (time.time() - start_time)
+        print('fps: ', fps)
+        fps_list.append(fps)
         if draw:
-            fps = 1 / (time.time() - start_time)
             cv2.putText(frame, f'FPS: {fps:.2f}', (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
 
-
-        # Save video frame
         if save_output:
             out.write(frame)
-
-        # Show output frame
-        if show_output:
-            cv2.imshow('Object Tracking', frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'): # Press 'q' to exit
-                 break
+    mean_fps = np.mean(fps_list)
+    print('mean_fps: ', mean_fps)
 except Exception as e:
     traceback.print_exc()
 finally:

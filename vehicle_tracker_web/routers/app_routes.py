@@ -72,7 +72,8 @@ def submit_vehicle_record():
             search_job_id=int(request.form["search_job_id"]),
             found_vehicle_image_path=image_path,
             found_time=datetime.strptime(request.form["found_time"], "%Y-%m-%d %H:%M:%S"),
-            description=request.form["description"]
+            description=request.form["description"],
+            vehicle_plate=request.form["vehicle_plate"]
         )
         db.add(record)
         db.commit()
@@ -120,6 +121,7 @@ def pending_search_jobs():
                 "created_at": job.created_at.isoformat(),
             }
             data.append(job_data)
+            print('pending_search_jobs: ', data)
         return jsonify(data)
     finally:
         db.close()

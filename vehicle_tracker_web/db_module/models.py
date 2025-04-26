@@ -33,6 +33,7 @@ class VehicleRecord(db):
     search_job_id = Column(Integer, ForeignKey('search_jobs.id'), nullable=False)
     found_vehicle_image_path = Column(String(120), nullable=False)
     description = Column(Text, nullable=False)
+    vehicle_plate = Column(String(20), nullable=False)
 
     utc_time = datetime.now(timezone.utc)
     kolkata_zone = pytz.timezone('Asia/Kolkata')
