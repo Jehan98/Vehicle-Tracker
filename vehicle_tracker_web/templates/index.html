@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <title>Search Jobs & Vehicle Records</title>
+  <link rel="icon" href="{{ url_for('static', filename='car.png') }}" type="image/png">
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -15,16 +16,16 @@
       min-height: 100vh;
       position: relative;
     }
-    
+
     body::before {
       content: "";
       position: absolute;
       top: 0; left: 0;
       width: 100%; height: 100%;
-      background-color: rgba(255, 255, 255, 0.7); /* white overlay for readability */
+      background-color: rgba(255, 255, 255, 0.7);
       z-index: 0;
     }
-    
+
     h1, .tab-buttons, .tab-content {
       position: relative;
       z-index: 1;
@@ -145,7 +146,7 @@
 
     th, td {
       border: 1px solid #ddd;
-      padding: 12px;
+      padding: 14px 12px;
       text-align: left;
     }
 
@@ -158,24 +159,44 @@
       margin-top: 10px;
     }
 
+    .scrollable-records-list {
+      max-height: 250px;
+      overflow-y: auto;
+      padding-right: 10px;
+      list-style: none;
+      padding-left: 0;
+      margin: 0;
+    }
+
+    .vehicle-records li {
+      border-bottom: 1px solid #eee;
+      padding-bottom: 10px;
+      margin-bottom: 10px;
+    }
+
+    .vehicle-records li:last-child {
+        border-bottom: none;
+    }
+
+
     .vehicle-records img {
-      width: 200px;
+      width: 150px;
       height: auto;
       margin-top: 10px;
       border-radius: 4px;
+      display: block;
+      max-width: 100%;
     }
   </style>
 </head>
 <body>
   <h1>Highway Patrol: Vehicle Tracker</h1>
 
-  <!-- Tabs -->
   <div class="tab-buttons">
     <button class="tab-btn active" onclick="showTab('submit-job')">Submit Search Job</button>
     <button class="tab-btn" onclick="showTab('tracking-vehicles')">Current Tracking Vehicles</button>
   </div>
 
-  <!-- Submit Job Form -->
   <div id="submit-job" class="tab-content active">
     <form class="styled-form" method="post" enctype="multipart/form-data" action="{{ url_for('app_routes.submit_search_job') }}">
       <label for="vehicle_plate">Vehicle Plate:</label>
@@ -197,7 +218,6 @@
     </form>
   </div>
 
-  <!-- Tracking Vehicles Table -->
   <div id="tracking-vehicles" class="tab-content">
     <table>
       <thead>
@@ -214,20 +234,24 @@
       <tbody>
         {% for job_data in data %}
         <tr>
-          <td>{{ job_data.vehicle_plate }}</td>
-          <td>{{ job_data.vehicle_type }}</td>
-          <td>{{ job_data.vehicle_color }}</td>
-          <td>{{ job_data.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
-          <td>{{ job_data.search_duration }} minutes</td>
-          <td>{{ job_data.description }}</td>
+          {# Access attributes from the 'search_job' object within the dictionary #}
+          <td>{{ job_data["search_job"].vehicle_plate }}</td>
+          <td>{{ job_data["search_job"].vehicle_type }}</td>
+          <td>{{ job_data["search_job"].vehicle_color }}</td>
+          <td>{{ job_data["search_job"].created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+          <td>{{ job_data["search_job"].search_duration }} minutes</td>
+          <td>{{ job_data["search_job"].description }}</td>
           <td>
             <div class="vehicle-records">
-              {% if job_data.vehicle_records %}
-                <ul>
-                  {% for record in job_data.vehicle_records %}
+              {% if job_data["vehicle_records"] %} {# Check the list under the key #}
+                {# IMPORTANT: Ensure job_data["vehicle_records"] is sorted by found_time DESCENDING in your backend #}
+                <ul class="scrollable-records-list">
+                  {# 'record' here is a VehicleRecord object, so direct access is correct #}
+                  {% for record in job_data["vehicle_records"] %}
                     <li>
                       <p><strong>Description:</strong> {{ record.description }}</p>
                       <p><strong>Found Time:</strong> {{ record.found_time }}</p>
+                      {# Ensure the URL generation is correct #}
                       <img src="{{ url_for('uploaded_file', filename=record.found_vehicle_image_path.split('/')[-1]) }}" alt="Found Vehicle Image">
                     </li>
                   {% endfor %}
@@ -259,8 +283,34 @@
 
       document.getElementById(tabId).classList.add('active');
 
-      event.target.classList.add('active');
+      const buttons = document.querySelectorAll('.tab-btn');
+      buttons.forEach(button => {
+          if (button.innerText.includes(tabId === 'submit-job' ? 'Submit Search Job' : 'Current Tracking Vehicles')) {
+             button.classList.add('active');
+          }
+      });
     }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const activeTab = urlParams.get('tab') || (document.querySelector('#tracking-vehicles tbody tr') ? 'tracking-vehicles' : 'submit-job'); // Simple check if tracking has data
+        showTab(activeTab);
+    });
+    document.addEventListener('DOMContentLoaded', () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const requestedTab = urlParams.get('tab');
+
+      // Default tab if no parameter is present or recognized
+      let defaultTab = 'submit-job';
+
+      // If a specific tab is requested in the URL and matches one of our tabs, use it
+      if (requestedTab === 'tracking-vehicles') {
+          defaultTab = 'tracking-vehicles';
+      }
+      // You could add other cases here if you have more tabs
+
+      showTab(defaultTab);
+    });
   </script>
 </body>
 </html>
