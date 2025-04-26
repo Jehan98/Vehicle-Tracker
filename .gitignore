@@ -5,3 +5,4 @@ track_records.db
 tracker-env
 */outs/*
 */configs/*
+*.log
