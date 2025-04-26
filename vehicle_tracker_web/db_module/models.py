@@ -16,11 +16,7 @@ class SearchJob(db):
     vehicle_type = Column(String(20), nullable=False)
     search_duration = Column(Integer, nullable=False)
     description = Column(Text, nullable=False)
-
-    utc_time = datetime.now(timezone.utc)
-    kolkata_zone = pytz.timezone('Asia/Kolkata')
-    kolkata_time = utc_time.astimezone(kolkata_zone)
-    created_at = Column(TIMESTAMP(timezone=True), default=kolkata_time)
+    created_at = Column(TIMESTAMP(timezone=True))
 
     vehicle_records = relationship("VehicleRecord", backref="search_job")
 
