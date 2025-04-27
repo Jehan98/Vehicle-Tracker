@@ -157,3 +157,49 @@ def pending_search_jobs():
         return jsonify(data)
     finally:
         db.close()
+
+@router.route("/api/tracking-data", methods=["GET"])
+def api_tracking_data():
+    """ Get tracking data for all jobs as JSON """
+    db = SessionLocal()
+    try:
+        search_jobs = db.query(SearchJob).order_by(desc(SearchJob.created_at)).all()
+
+        data = []
+        for job in search_jobs:
+            vehicle_records = db.query(VehicleRecord).filter(
+                VehicleRecord.search_job_id == job.id
+            ).order_by(desc(VehicleRecord.found_time)).all()
+
+            records_data = []
+            for record in vehicle_records:
+                image_url = url_for('uploaded_file', filename=record.found_vehicle_image_path.split('/')[-1], _external=True) # Use _external=True if necessary for full URL
+                records_data.append({
+                    "id": record.id,
+                    "description": record.description,
+                    "found_time": record.found_time.strftime('%Y-%m-%d %H:%M:%S'), # Format datetime
+                    "vehicle_plate": record.vehicle_plate,
+                    "found_vehicle_image_path": image_url # Send the generated URL
+                })
+
+            job_data = {
+                "id": job.id,
+                "vehicle_plate": job.vehicle_plate,
+                "vehicle_type": job.vehicle_type,
+                "vehicle_color": job.vehicle_color,
+                "created_at": job.created_at.strftime('%Y-%m-%d %H:%M:%S'), # Format datetime
+                "search_duration": job.search_duration,
+                "description": job.description,
+            }
+
+            data.append({
+                "search_job": job_data,
+                "vehicle_records": records_data
+            })
+
+        return jsonify(data)
+    except Exception as e:
+        print(f"Error fetching tracking data: {e}")
+        return jsonify({"error": "Failed to fetch data"}), 500
+    finally:
+        db.close()

@@ -178,7 +178,6 @@
         border-bottom: none;
     }
 
-
     .vehicle-records img {
       width: 150px;
       height: auto;
@@ -193,11 +192,11 @@
   <h1>Highway Patrol: Vehicle Tracker</h1>
 
   <div class="tab-buttons">
-    <button class="tab-btn active" onclick="showTab('submit-job')">Submit Search Job</button>
-    <button class="tab-btn" onclick="showTab('tracking-vehicles')">Current Tracking Vehicles</button>
+    <button class="tab-btn active" onclick="showTab('tracking-vehicles')">Current Tracking Vehicles</button>
+    <button class="tab-btn" onclick="showTab('submit-job')">Submit Search Job</button>
   </div>
 
-  <div id="submit-job" class="tab-content active">
+  <div id="submit-job" class="tab-content">
     <form class="styled-form" method="post" enctype="multipart/form-data" action="{{ url_for('app_routes.submit_search_job') }}">
       <label for="vehicle_plate">Vehicle Plate:</label>
       <input type="text" name="vehicle_plate" required>
@@ -218,7 +217,7 @@
     </form>
   </div>
 
-  <div id="tracking-vehicles" class="tab-content">
+  <div id="tracking-vehicles" class="tab-content active">
     <table>
       <thead>
         <tr>
@@ -231,10 +230,10 @@
           <th>Found Vehicles</th>
         </tr>
       </thead>
-      <tbody>
+      <tbody id="tracking-table-body">
+        {# Initial data rendered by Flask #}
         {% for job_data in data %}
         <tr>
-          {# Access attributes from the 'search_job' object within the dictionary #}
           <td>{{ job_data["search_job"].vehicle_plate }}</td>
           <td>{{ job_data["search_job"].vehicle_type }}</td>
           <td>{{ job_data["search_job"].vehicle_color }}</td>
@@ -243,15 +242,12 @@
           <td>{{ job_data["search_job"].description }}</td>
           <td>
             <div class="vehicle-records">
-              {% if job_data["vehicle_records"] %} {# Check the list under the key #}
-                {# IMPORTANT: Ensure job_data["vehicle_records"] is sorted by found_time DESCENDING in your backend #}
+              {% if job_data["vehicle_records"] %}
                 <ul class="scrollable-records-list">
-                  {# 'record' here is a VehicleRecord object, so direct access is correct #}
                   {% for record in job_data["vehicle_records"] %}
                     <li>
                       <p><strong>Description:</strong> {{ record.description }}</p>
                       <p><strong>Found Time:</strong> {{ record.found_time }}</p>
-                      {# Ensure the URL generation is correct #}
                       <img src="{{ url_for('uploaded_file', filename=record.found_vehicle_image_path.split('/')[-1]) }}" alt="Found Vehicle Image">
                     </li>
                   {% endfor %}
@@ -272,6 +268,8 @@
   </div>
 
   <script>
+    let pollingIntervalId = null; // Variable to store the interval ID
+
     function showTab(tabId) {
       document.querySelectorAll('.tab-content').forEach(tab => {
         tab.classList.remove('active');
@@ -285,32 +283,128 @@
 
       const buttons = document.querySelectorAll('.tab-btn');
       buttons.forEach(button => {
-          if (button.innerText.includes(tabId === 'submit-job' ? 'Submit Search Job' : 'Current Tracking Vehicles')) {
+          if ((tabId === 'submit-job' && button.innerText.includes('Submit Search Job')) ||
+              (tabId === 'tracking-vehicles' && button.innerText.includes('Current Tracking Vehicles'))) {
              button.classList.add('active');
           }
       });
+
+      // Manage polling based on the active tab
+      if (tabId === 'tracking-vehicles') {
+          startPollingTrackingData();
+      } else {
+          stopPollingTrackingData();
+      }
     }
 
-    document.addEventListener('DOMContentLoaded', () => {
-        const urlParams = new URLSearchParams(window.location.search);
-        const activeTab = urlParams.get('tab') || (document.querySelector('#tracking-vehicles tbody tr') ? 'tracking-vehicles' : 'submit-job'); // Simple check if tracking has data
-        showTab(activeTab);
-    });
+    async function fetchAndDisplayTrackingData() {
+        try {
+            const response = await fetch("{{ url_for('app_routes.api_tracking_data') }}");
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const data = await response.json();
+            console.log("Fetched data:", data); // Debugging
+
+            const tbody = document.getElementById('tracking-table-body');
+            tbody.innerHTML = ''; // Clear current table body
+
+            if (data.length === 0) {
+                // Display a message if there are no jobs
+                 const noJobsRow = `<tr><td colspan="7" style="text-align:center;">No tracking jobs available.</td></tr>`;
+                 tbody.innerHTML = noJobsRow;
+                 return; // Exit the function
+            }
+
+
+            // Build the new table body content from the fetched JSON data
+            data.forEach(jobData => {
+                const job = jobData.search_job;
+                const records = jobData.vehicle_records;
+
+                let recordsHtml = '<div class="vehicle-records">';
+                if (records.length > 0) {
+                    recordsHtml += '<ul class="scrollable-records-list">';
+                    records.forEach(record => {
+                        recordsHtml += `
+                            <li>
+                                <p><strong>Description:</strong> ${record.description}</p>
+                                <p><strong>Found Time:</strong> ${record.found_time}</p>
+                                <img src="${record.found_vehicle_image_path}" alt="Found Vehicle Image">
+                            </li>
+                        `;
+                    });
+                    recordsHtml += '</ul>';
+                } else {
+                    recordsHtml += '<p>No vehicle records found for this search job.</p>';
+                }
+                recordsHtml += '</div>';
+
+                const row = `
+                    <tr>
+                        <td>${job.vehicle_plate}</td>
+                        <td>${job.vehicle_type}</td>
+                        <td>${job.vehicle_color}</td>
+                        <td>${job.created_at}</td>
+                        <td>${job.search_duration} minutes</td>
+                        <td>${job.description}</td>
+                        <td>${recordsHtml}</td>
+                    </tr>
+                `;
+                tbody.innerHTML += row; // Append the new row
+            });
+
+        } catch (error) {
+            console.error("Error fetching tracking data:", error);
+            // Optionally display an error message on the page
+             const tbody = document.getElementById('tracking-table-body');
+             if (!tbody.querySelector('.error-message')) { // Avoid adding multiple error messages
+                 const errorRow = `<tr><td colspan="7" style="text-align:center; color: red;" class="error-message">Failed to load tracking data. Retrying...</td></tr>`;
+                 tbody.innerHTML = errorRow;
+             }
+        }
+    }
+
+    // Function to start polling
+    function startPollingTrackingData() {
+        // Clear any existing interval first
+        stopPollingTrackingData();
+        // Fetch data immediately on tab switch
+        fetchAndDisplayTrackingData();
+        // Set interval to fetch data periodically (e.g., every 5 seconds)
+        pollingIntervalId = setInterval(fetchAndDisplayTrackingData, 5000); // Poll every 5000 milliseconds (5 seconds)
+        console.log("Started polling...");
+    }
+
+    // Function to stop polling
+    function stopPollingTrackingData() {
+        if (pollingIntervalId) {
+            clearInterval(pollingIntervalId);
+            pollingIntervalId = null;
+            console.log("Stopped polling.");
+        }
+    }
+
+
     document.addEventListener('DOMContentLoaded', () => {
       const urlParams = new URLSearchParams(window.location.search);
       const requestedTab = urlParams.get('tab');
 
-      // Default tab if no parameter is present or recognized
-      let defaultTab = 'submit-job';
+      // Default tab is 'tracking-vehicles'
+      let defaultTab = 'tracking-vehicles';
 
-      // If a specific tab is requested in the URL and matches one of our tabs, use it
-      if (requestedTab === 'tracking-vehicles') {
-          defaultTab = 'tracking-vehicles';
+      // If a specific tab is requested in the URL and matches 'submit-job', use it
+      if (requestedTab === 'submit-job') {
+          defaultTab = 'submit-job';
       }
-      // You could add other cases here if you have more tabs
+      // The 'tracking-vehicles' request is handled by the default setting above
 
-      showTab(defaultTab);
+      showTab(defaultTab); // This call will now also manage starting/stopping polling
     });
+
+    // Ensure polling stops if the user navigates away or closes the tab
+    window.addEventListener('beforeunload', stopPollingTrackingData);
+
   </script>
 </body>
 </html>

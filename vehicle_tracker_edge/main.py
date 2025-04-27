@@ -51,7 +51,7 @@ use_cuda_for_deepsort = config.get("use_cuda_for_deepsort", False)
 frames_to_read = config.get("frames_to_read", 30)
 
 # Initialize YOLO and DeepSORT
-model = YOLO('models/yolov8n.onnx')
+model = YOLO('models/yolov8n.onnx', task="detect")
 deepsort = DeepSort(
     model_path="utills/deep_sort/deep/checkpoint/ckpt.t7",
     max_dist=max_dist,
@@ -98,8 +98,8 @@ try:
     while cap.isOpened():
         start_time = time.time()
 
-        if start_time - system_start_time > 100:
-            break
+        # if start_time - system_start_time > 100:
+        #     break
 
         ret, frame = cap.read()
         FRAME_COUNT += 1
@@ -218,7 +218,7 @@ try:
                 if is_center_inside_rectangle((cx, cy), right_side_rect_coodinates) and track_id not in processed_vehicle_ids:
                     roi = frame_copy[y1:y2, x1:x2]
                     if roi.shape[0] > 0 and roi.shape[1] > 0: # Ensure ROI is valid
-                        ocr_results = reader.readtext(roi, detail=0)
+                        ocr_results = reader.readtext(roi, detail=0, allowlist='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
                         if not ocr_results:
                             continue
                         print(f'Track ID: {track_id}, OCR Results: {ocr_results}')
@@ -232,7 +232,7 @@ try:
                                     continue
                                 cleaned_plate = plate.replace(" ", "").upper()
                                 score = fuzz.partial_ratio(cleaned_plate, target_plate)
-                                print(f"Plate match score: {plate}")
+                                print(f"Plate match score: {plate}, {target_plate}: {score}")
                                 if score > 80:
                                     processed_vehicle_ids.add(track_id)
 
